@@ -54,7 +54,10 @@ conflicts, prefer their copy design-wise and add the new capability into it.
 4. `npm install`.
 
 ### Step 3 — Database
-1. Apply `supabase/migrations/002_crm_core.sql` to their Supabase project
+1. **Before applying anything, read their env and tell the member which
+   Supabase project URL it points at, and ask them to confirm it's theirs.**
+   Never apply a migration to a database you haven't confirmed out loud.
+2. Apply `supabase/migrations/002_crm_core.sql` to their Supabase project
    (use `scripts/apply-migration.mjs` or the Supabase SQL editor).
    It is additive — no destructive changes.
 2. **Frontend pairing:** copy `src/types/database.ts` byte-identical into
