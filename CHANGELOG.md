@@ -2,7 +2,7 @@
 
 All notable changes to the Digital Home Backend Starter.
 
-## [2.0.0] — 2026-08-03
+## [2.5.0] — 2026-08-03
 
 The operating-system release: your backend grows from a content pipeline
 into a full CRM, email automation engine, social calendar, and bookings

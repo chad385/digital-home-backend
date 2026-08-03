@@ -18,9 +18,9 @@ customizations are intentional: **merge, don't overwrite.** When a file
 conflicts, prefer their copy design-wise and add the new capability into it.
 
 ### Step 0 — Determine current version
-- If a `VERSION` file exists, read it. If it says `2.0.0` or higher, stop —
+- If a `VERSION` file exists, read it. If it says `2.5.0` or higher, stop —
   already up to date.
-- No `VERSION` file = v1.x (content pipeline era). Apply the full v2.0.0
+- No `VERSION` file = v1.x (content pipeline era). Apply the full v2.5.0
   upgrade below.
 - Confirm this is really the backend (has `src/app/api/write-article/` or
   similar) and NOT the frontend. If it's the frontend, stop and say so.
@@ -28,15 +28,15 @@ conflicts, prefer their copy design-wise and add the new capability into it.
 ### Step 1 — Preflight
 1. `git status` — if there are uncommitted changes, commit or stash them
    first so the upgrade is revertible.
-2. Create a branch: `git checkout -b upgrade/v2.0.0`.
+2. Create a branch: `git checkout -b upgrade/v2.5.0`.
 3. Add the starter as a remote if missing:
    `git remote add starter https://github.com/lukesbrave/digital-home-backend-starter.git`
    then `git fetch starter --tags`.
 
-### Step 2 — Bring in v2.0.0
-1. Diff `git diff HEAD..v2.0.0 --stat` to see scope.
+### Step 2 — Bring in v2.5.0
+1. Diff `git diff HEAD..v2.5.0 --stat` to see scope.
 2. New files (the vast majority) can be checked out directly:
-   `git checkout v2.0.0 -- <path>` for: `src/lib/crm/`, `src/lib/social/`,
+   `git checkout v2.5.0 -- <path>` for: `src/lib/crm/`, `src/lib/social/`,
    `src/app/api/crm/`, `src/app/api/social/`, `src/app/api/settings/`,
    `src/app/api/webhooks/`, `src/app/crm/`, `src/app/social/`,
    `src/components/crm/`, `worker.ts`, `scripts/deploy.sh`,
@@ -46,11 +46,11 @@ conflicts, prefer their copy design-wise and add the new capability into it.
 3. Shared files — MERGE these by hand, preserving the member's edits:
    `src/components/sidebar.tsx` (add CRM + Social nav sections),
    `src/middleware.ts`, `src/lib/api/auth.ts` (social role + signed
-   requests), `src/types/database.ts` (take v2.0.0's copy wholesale unless
+   requests), `src/types/database.ts` (take v2.5.0's copy wholesale unless
    they added their own tables — then merge), `package.json` (add new deps,
    keep theirs), `tsconfig.json`, `wrangler.jsonc` (add the cron trigger;
    KEEP their routes/domains/vars), `src/app/api/write-article/route.ts`
-   and `src/app/api/trend-scan/route.ts` (take v2.0.0 unless customized).
+   and `src/app/api/trend-scan/route.ts` (take v2.5.0 unless customized).
 4. `npm install`.
 
 ### Step 3 — Database
@@ -81,7 +81,7 @@ conflicts, prefer their copy design-wise and add the new capability into it.
    activity entry and an opportunity in the first stage.
 4. Draft a 2-step test workflow, enroll yourself, run "Run engine now" —
    the send appears as `simulated` in the sent-email viewer.
-5. Commit, merge the branch, deploy. Done — write `2.0.0` into `VERSION`
+5. Commit, merge the branch, deploy. Done — write `2.5.0` into `VERSION`
    if not already there.
 
 ### If something breaks
