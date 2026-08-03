@@ -4,7 +4,7 @@ This guide is written to be executed by **Claude Code inside your own
 backend project**. Paste this into Claude Code from your backend project
 folder:
 
-> Fetch https://raw.githubusercontent.com/lukesbrave/digital-home-backend-starter/main/UPGRADE.md
+> Fetch https://raw.githubusercontent.com/lukesbrave/digital-home-backend/main/UPGRADE.md
 > and upgrade my backend to the latest version. My project may be
 > customized — preserve my changes while applying the upgrade.
 
@@ -13,7 +13,7 @@ folder:
 ## Instructions for Claude
 
 You are upgrading a member's Digital Home backend — a customized fork of
-`digital-home-backend-starter`. Work inside THEIR project. Their
+`digital-home-backend`. Work inside THEIR project. Their
 customizations are intentional: **merge, don't overwrite.** When a file
 conflicts, prefer their copy design-wise and add the new capability into it.
 
@@ -30,7 +30,7 @@ conflicts, prefer their copy design-wise and add the new capability into it.
    first so the upgrade is revertible.
 2. Create a branch: `git checkout -b upgrade/v2.5.0`.
 3. Add the starter as a remote if missing:
-   `git remote add starter https://github.com/lukesbrave/digital-home-backend-starter.git`
+   `git remote add starter https://github.com/lukesbrave/digital-home-backend.git`
    then `git fetch starter --tags`.
 
 ### Step 2 — Bring in v2.5.0
@@ -61,7 +61,7 @@ conflicts, prefer their copy design-wise and add the new capability into it.
    (use `scripts/apply-migration.mjs` or the Supabase SQL editor).
    It is additive — no destructive changes.
 2. **Frontend pairing:** copy `src/types/database.ts` byte-identical into
-   their frontend project (`digital-home-frontend-starter` fork), commit
+   their frontend project (`digital-home-frontend` fork), commit
    there too. Both repos share one Supabase — types must match.
 
 ### Step 4 — Configuration

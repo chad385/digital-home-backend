@@ -2,7 +2,7 @@
 
 ## First Time Setup
 
-If you just cloned this repo, follow these steps in order. You need both this repo (Backend) and the [Digital Home Frontend Starter](https://github.com/lukesbrave/digital-home-frontend-starter) repo. **Set up the Frontend first** — it has the shared website migrations.
+If you just cloned this repo, follow these steps in order. You need both this repo (Backend) and the [Digital Home Frontend](https://github.com/lukesbrave/digital-home-frontend) repo. **Set up the Frontend first** — it has the shared website migrations.
 
 ### Recommended Setup Flow
 
@@ -14,7 +14,7 @@ If you just cloned this repo, follow these steps in order. You need both this re
 
 Using a separate chat for each repo helps Claude stay in the correct project context and avoids confusion between frontend and backend files, migrations, and environment variables.
 
-Before continuing backend setup, confirm Claude is working inside `digital-home-backend-starter` and using the same Supabase project as the Frontend.
+Before continuing backend setup, confirm Claude is working inside `digital-home-backend` and using the same Supabase project as the Frontend.
 
 ### Step 0: Check for Node.js
 Before anything else, check if the user has Node.js installed by running `node -v`. If the command fails or is not found, walk them through installing it: go to [nodejs.org](https://nodejs.org), download the LTS version, and run the installer. They need Node.js to run this project.
@@ -236,7 +236,7 @@ The Backend connects to the same Supabase database as the Digital Home Frontend 
 
 ## Project Structure
 ```
-  /digital-home-backend-starter/
+  /digital-home-backend/
   CLAUDE.md              ← You are here
   /src
     /app
