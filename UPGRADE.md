@@ -18,8 +18,9 @@ customizations are intentional: **merge, don't overwrite.** When a file
 conflicts, prefer their copy design-wise and add the new capability into it.
 
 ### Step 0 — Determine current version
-- If a `VERSION` file exists, read it. If it says `2.5.0` or higher, stop —
-  already up to date.
+- If a `VERSION` file exists, read it. If it says `2.5.1` or higher, stop —
+  already up to date. If it says `2.5.0`, apply ONLY the "Patch upgrades"
+  section at the bottom of this guide.
 - No `VERSION` file = v1.x (content pipeline era). Apply the full v2.5.0
   upgrade below.
 - Confirm this is really the backend (has `src/app/api/write-article/` or
