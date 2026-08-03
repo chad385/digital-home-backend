@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import { authenticateSessionOrApiKey, unauthorizedResponse } from "@/lib/api/auth";
+import { callModel } from "@/lib/crm/ai";
 import { createAdminClient } from "@/lib/supabase/server";
+import { attributionPromptBlock } from "@/lib/crm/attribution";
 import type { Database, Json } from "@/types/database";
 
 type TrendScanConfig = {
@@ -297,11 +298,18 @@ export async function POST(request: NextRequest) {
     existingKeys.add(normalize(entry.target_keyword));
   }
 
-  const anthropic = new Anthropic();
   const runId = `TRENDS-${new Date().toISOString().slice(0, 10)}`;
+  // Explicit caller intent wins (an agent can ask for "planned" so its scans
+  // always pass through the owner's eyes); otherwise the global publish mode
+  // decides, as before.
   const targetStatus: NonNullable<
     Database["public"]["Tables"]["content_calendar"]["Insert"]["status"]
-  > = publishMode === "autonomous" ? "approved" : "planned";
+  > =
+    body.target_status === "planned" || body.target_status === "approved"
+      ? body.target_status
+      : publishMode === "autonomous"
+        ? "approved"
+        : "planned";
 
   const promptPayload = trendItems.slice(0, 30).map((item, index) => ({
     index: index + 1,
@@ -338,6 +346,10 @@ Rules:
   ]
 }`;
 
+  // Bias topic selection toward content that has already converted visitors
+  // into leads (empty string until attribution has signal).
+  const attribution = await attributionPromptBlock(supabase).catch(() => "");
+
   const userPrompt = `Audience:
 ${config.audience_description}
 
@@ -346,19 +358,11 @@ ${config.keyword_clusters.join(", ")}
 
 Avoid topics about:
 ${config.exclude_terms.join(", ")}
-
+${attribution}
 Create up to ${maxNewEntries} new content calendar entries from these recent trend headlines:
 ${JSON.stringify(promptPayload, null, 2)}`;
 
-  const completion = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 4096,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
-  });
-
-  const responseText =
-    completion.content[0]?.type === "text" ? completion.content[0].text : "";
+  const { text: responseText } = await callModel(systemPrompt, userPrompt, 4096);
 
   let parsed: { entries?: CandidateEntry[] };
   try {
