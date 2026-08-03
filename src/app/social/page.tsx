@@ -436,7 +436,16 @@ function Composer({
       onSaved();
       onClose();
     } catch (e) {
-      show(e instanceof Error ? e.message : 'Save failed', 'err');
+      const message = e instanceof Error ? e.message : 'Save failed';
+      if (editing && /not found/i.test(message)) {
+        // The post was deleted or replaced elsewhere (another tab, the CLI):
+        // a stale board is the real problem, so refresh it instead of dead-ending.
+        show('This post no longer exists — the board was out of date and has been refreshed', 'err');
+        onSaved();
+        onClose();
+      } else {
+        show(message, 'err');
+      }
     } finally {
       setBusy(false);
     }
@@ -711,7 +720,16 @@ function PostDetail({
       onChanged();
       onClose();
     } catch (e) {
-      show(e instanceof Error ? e.message : 'Action failed', 'err');
+      const message = e instanceof Error ? e.message : 'Action failed';
+      if (/not found/i.test(message)) {
+        // Post deleted or replaced elsewhere (another tab, the CLI) — the
+        // board is stale, so refresh it instead of dead-ending on the error.
+        show('This post no longer exists — the board was out of date and has been refreshed', 'err');
+        onChanged();
+        onClose();
+      } else {
+        show(message, 'err');
+      }
     } finally {
       setBusy(false);
     }
@@ -719,32 +737,62 @@ function PostDetail({
 
   return (
     <Modal title={post.title || 'Untitled post'} onClose={onClose} wide>
-      <div className="grid grid-cols-[180px_1fr] gap-6">
+      <div
+        className={`grid ${post.post_type === 'carousel' ? 'grid-cols-[280px_1fr]' : 'grid-cols-[180px_1fr]'} gap-6`}
+      >
         <div className="flex flex-col gap-2">
-          <div className="aspect-[9/16] rounded-xl overflow-hidden bg-minimal-row border border-minimal-border">
-            {post.post_type === 'carousel' ? (
-              media[slide] ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={media[slide].url}
-                  alt={`Slide ${slide + 1}`}
-                  className="w-full h-full object-cover"
-                />
-              ) : null
-            ) : (
-              post.video_url && (
+          {post.post_type === 'carousel' ? (
+            <div className="relative">
+              {/* Slides are 4:5 (up to 1:1) — show them uncropped, the way IG renders them */}
+              <div className="aspect-[4/5] rounded-xl overflow-hidden bg-black border border-minimal-border">
+                {media[slide] && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={media[slide].url}
+                    alt={`Slide ${slide + 1}`}
+                    className="w-full h-full object-contain"
+                  />
+                )}
+              </div>
+              {media.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Previous slide"
+                    onClick={() => setSlide((slide - 1 + media.length) % media.length)}
+                    className="absolute left-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/60 text-white flex items-center justify-center opacity-70 hover:opacity-100 transition-opacity"
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Next slide"
+                    onClick={() => setSlide((slide + 1) % media.length)}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/60 text-white flex items-center justify-center opacity-70 hover:opacity-100 transition-opacity"
+                  >
+                    ›
+                  </button>
+                  <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/60 text-white text-[10px] font-medium">
+                    {slide + 1}/{media.length}
+                  </span>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="aspect-[9/16] rounded-xl overflow-hidden bg-minimal-row border border-minimal-border">
+              {post.video_url && (
                 <video src={post.video_url} className="w-full h-full object-cover" controls playsInline />
-              )
-            )}
-          </div>
+              )}
+            </div>
+          )}
           {post.post_type === 'carousel' && media.length > 1 && (
-            <div className="flex gap-1.5 flex-wrap">
+            <div className="flex gap-1.5 overflow-x-auto pb-1">
               {media.map((m, i) => (
                 <button
                   key={m.id}
                   type="button"
                   onClick={() => setSlide(i)}
-                  className={`w-8 h-10 rounded overflow-hidden border transition-colors ${
+                  className={`w-8 h-10 rounded overflow-hidden border shrink-0 transition-colors ${
                     i === slide ? 'border-white' : 'border-minimal-border opacity-60 hover:opacity-100'
                   }`}
                   title={`Slide ${i + 1}`}
@@ -1060,16 +1108,29 @@ export default function SocialStudioPage() {
   };
 
   const load = useCallback(async () => {
-    try {
-      const [postsRes, accountsRes] = await Promise.all([
-        api<{ posts: PostRow[] }>('/api/social/posts?limit=200'),
-        api<{ accounts: AccountRow[] }>('/api/social/accounts'),
-      ]);
-      setPosts(postsRes.posts);
-      setAccounts(accountsRes.accounts);
-    } catch (e) {
+    // Settled, not all-or-nothing: a failing accounts call used to take the
+    // whole calendar down with it, which read as "the studio is empty".
+    const [postsRes, accountsRes] = await Promise.allSettled([
+      api<{ posts: PostRow[] }>('/api/social/posts?limit=200'),
+      api<{ accounts: AccountRow[] }>('/api/social/accounts'),
+    ]);
+
+    if (postsRes.status === 'fulfilled') {
+      setPosts(postsRes.value.posts);
+    } else {
+      const e = postsRes.reason;
       show(e instanceof Error ? e.message : 'Failed to load — has migration 019 been applied?', 'err');
       setPosts([]);
+    }
+
+    if (accountsRes.status === 'fulfilled') {
+      setAccounts(accountsRes.value.accounts);
+    } else {
+      const e = accountsRes.reason;
+      show(
+        e instanceof Error ? `Couldn't load accounts: ${e.message}` : "Couldn't load accounts",
+        'err'
+      );
     }
   }, [show]);
 

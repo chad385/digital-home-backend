@@ -87,3 +87,14 @@ conflicts, prefer their copy design-wise and add the new capability into it.
 ### If something breaks
 Revert is always available: `git checkout main` (the upgrade lives on its
 branch until merged). The migration is additive and safe to leave applied.
+
+## Patch upgrades (you're already on 2.5.x)
+
+If your `VERSION` says `2.5.0` and the latest is `2.5.1`: fetch the starter
+remote (`git fetch starter --tags`) and take the patched files directly —
+
+    git checkout v2.5.1 -- "src/app/api/social/accounts/route.ts" "src/app/social/accounts/page.tsx" "src/app/social/page.tsx" VERSION CHANGELOG.md
+
+If the member has customized any of these files, merge instead of
+overwrite. Then build, verify the social studio loads, and deploy.
+No database changes in this patch.

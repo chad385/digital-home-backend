@@ -2,6 +2,17 @@
 
 All notable changes to the Digital Home Backend Starter.
 
+## [2.5.1] — 2026-08-03
+
+Social calendar fixes, straight from production use:
+
+- Carousels now render as carousels in the post modal (previously showed
+  only the first slide).
+- The `social-manager` role can read connected accounts (previously
+  couldn't see which platforms were wired up).
+- The studio board self-heals when a post was replaced or deleted in
+  another session (no more stale "Not found" errors).
+
 ## [2.5.0] — 2026-08-03
 
 The operating-system release: your backend grows from a content pipeline

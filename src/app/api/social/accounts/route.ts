@@ -21,8 +21,11 @@ function redact<T extends { access_token?: string | null; refresh_token?: string
 }
 
 export async function GET(request: NextRequest) {
-  const auth = await authenticateSessionOrApiKey(request);
+  // The social role has to read the connected accounts — they're the publish
+  // targets in the composer. Connecting/disconnecting stays admin-only below.
+  const auth = await authenticateSessionOrApiKey(request, { allowRoles: ["admin", "social"] });
   if (!auth.authenticated) return unauthorizedResponse(auth.error);
+  const canManage = auth.mode !== "session" || auth.role === "admin";
 
   const supabase = createAdminClient();
   const { data, error } = await supabase
@@ -35,6 +38,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     accounts: (data || []).map(redact),
     oauth: { meta: metaOAuthConfigured(), google: googleOAuthConfigured() },
+    can_manage: canManage,
   });
 }
 

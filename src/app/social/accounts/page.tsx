@@ -106,16 +106,27 @@ export default function SocialAccountsPage() {
   const [accounts, setAccounts] = useState<AccountRow[] | null>(null);
   const [oauth, setOauth] = useState({ meta: false, google: false });
   const [manual, setManual] = useState<'meta' | 'youtube' | null>(null);
+  const [canManage, setCanManage] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await api<{ accounts: AccountRow[]; oauth: { meta: boolean; google: boolean } }>(
-        '/api/social/accounts'
-      );
+      const res = await api<{
+        accounts: AccountRow[];
+        oauth: { meta: boolean; google: boolean };
+        can_manage: boolean;
+      }>('/api/social/accounts');
       setAccounts(res.accounts);
       setOauth(res.oauth);
+      setCanManage(res.can_manage);
+      setLoadError(null);
     } catch (e) {
-      show(e instanceof Error ? e.message : 'Failed to load — has migration 019 been applied?', 'err');
+      // Never fall through to the empty state here: an unreadable list looked
+      // exactly like "nothing is connected", which sent people to the manual
+      // token modal for accounts that were already live.
+      const msg = e instanceof Error ? e.message : 'Failed to load — has migration 019 been applied?';
+      show(msg, 'err');
+      setLoadError(msg);
       setAccounts([]);
     }
   }, [show]);
@@ -158,25 +169,37 @@ export default function SocialAccountsPage() {
     <div className="flex flex-col h-full">
       {toastNode}
       <PageHeader title="Social">
-        <GhostBtn
-          onClick={() =>
-            oauth.meta ? (window.location.href = '/api/social/oauth/meta') : setManual('meta')
-          }
-        >
-          Connect Instagram + Facebook
-        </GhostBtn>
-        <GhostBtn
-          onClick={() =>
-            oauth.google ? (window.location.href = '/api/social/oauth/google') : setManual('youtube')
-          }
-        >
-          Connect YouTube
-        </GhostBtn>
+        {canManage && (
+          <>
+            <GhostBtn
+              onClick={() =>
+                oauth.meta ? (window.location.href = '/api/social/oauth/meta') : setManual('meta')
+              }
+            >
+              Connect Instagram + Facebook
+            </GhostBtn>
+            <GhostBtn
+              onClick={() =>
+                oauth.google
+                  ? (window.location.href = '/api/social/oauth/google')
+                  : setManual('youtube')
+              }
+            >
+              Connect YouTube
+            </GhostBtn>
+          </>
+        )}
       </PageHeader>
       <SocialNav />
 
       <div className="flex-1 overflow-y-auto px-12 py-8">
-        {!oauth.meta && !oauth.google && (
+        {loadError && (
+          <div className="mb-6 px-4 py-3 border border-red-900/60 bg-red-950/30 rounded-lg text-[13px] text-red-300 leading-relaxed">
+            Couldn&apos;t load the connected accounts: {loadError}
+          </div>
+        )}
+
+        {canManage && !oauth.meta && !oauth.google && (
           <div className="mb-6 px-4 py-3 border border-minimal-border rounded-lg text-[13px] text-zinc-400 leading-relaxed">
             OAuth apps aren&apos;t configured yet, so the connect buttons fall back to manual token
             entry. To enable one-click connects, set <code>META_APP_ID</code> /{' '}
@@ -185,10 +208,14 @@ export default function SocialAccountsPage() {
           </div>
         )}
 
-        {visible.length === 0 ? (
+        {loadError ? null : visible.length === 0 ? (
           <EmptyState
             title="No accounts connected"
-            hint="Connect the brand's Instagram business account (via its Facebook page) and the YouTube channel to start distributing."
+            hint={
+              canManage
+                ? "Connect the brand's Instagram business account (via its Facebook page) and the YouTube channel to start distributing."
+                : 'Ask an admin to connect the brand accounts — this login can publish through them but not connect them.'
+            }
           />
         ) : (
           <div className="flex flex-col gap-3 max-w-3xl">
@@ -207,9 +234,11 @@ export default function SocialAccountsPage() {
                   </div>
                 </div>
                 <StatusDot status={a.status} map={ACCOUNT_STATUS_DOTS} />
-                <GhostBtn danger onClick={() => disconnect(a)}>
-                  Disconnect
-                </GhostBtn>
+                {canManage && (
+                  <GhostBtn danger onClick={() => disconnect(a)}>
+                    Disconnect
+                  </GhostBtn>
+                )}
               </div>
             ))}
           </div>
