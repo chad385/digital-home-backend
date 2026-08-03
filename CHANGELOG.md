@@ -33,8 +33,14 @@ system.
 **Social calendar**
 - Social studio at `/social`: plan, compose, and publish to Instagram,
   Facebook, and YouTube from one calendar.
+- **Post Now**: publish immediately from the composer (fire-and-forget —
+  the engine runs inline and the calendar card tracks progress).
 - Multi-slide carousels, single-photo posts, and short-form video
   distribution (IG Reels / FB Reels / YouTube Shorts).
+- Media storage on Cloudflare R2: multipart uploads (no 50MB cap), free
+  egress for Meta's pulls, refcounted deletion. Images auto-normalize to
+  JPEG and auto-crop into Instagram's accepted ratio range on upload;
+  video aspect guards warn on non-9:16.
 - Meta business-login connect flow + manual connect script; Google OAuth
   for YouTube.
 - `social-manager` role for team members who only touch social.

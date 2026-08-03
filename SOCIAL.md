@@ -22,9 +22,14 @@ command flips a role, so promote/demote is one line.
 
 ## How it works
 
-- **Storage** — videos upload from the browser straight to the public
-  `social-videos` Supabase bucket (signed upload URLs, uuid paths). Meta
-  ingests by pulling that URL; YouTube gets the bytes streamed by the worker.
+- **Storage** — media lives in the **`social-media` Cloudflare R2 bucket**
+  (no 50MB cap, free egress for Meta's pulls). Uploads go through the API in
+  ~40MB multipart chunks (`/api/social/upload` → `…/part` → `…/complete`,
+  scoped token auth), and files serve publicly from your media domain — a
+  custom domain you attach to the bucket (e.g. `media.yourdomain.com`, set
+  via `R2_PUBLIC_BASE`). Meta ingests by pulling that URL; YouTube
+  gets the bytes streamed by the worker. Note: deleted objects can stay
+  edge-cached for a while.
 - **Engine** — `POST /api/social/tick` (idempotent, mirrors the CRM tick).
   The Cloudflare cron in `wrangler.jsonc` fires it every 5 minutes once the
   worker is deployed. Posts go `scheduled → publishing → published/partial/failed`;
@@ -32,11 +37,15 @@ command flips a role, so promote/demote is one line.
   target can sit in `processing` across ticks). 3 retry attempts, 45-min
   processing deadline.
 - **Image posts** — the browser (or `scripts/social-post.mjs`) uploads each
-  slide to the same bucket. On publish: 1 slide → a single IG IMAGE container
-  / FB photo post; 2–10 slides → IG child containers → a CAROUSEL container
-  (same status walk as Reels) and an FB multi-photo feed post (synchronous —
-  publishes in a single step). JPEG is the safe slide format: Instagram only
-  guarantees JPEG ingest.
+  slide to the same bucket, and both **auto-normalize on upload**: everything
+  re-encodes to JPEG and anything outside Instagram's 4:5–1.91:1 range is
+  center-cropped to the nearest bound (a raw phone photo is 3:4), capped at
+  1440px wide — the preview is exactly what publishes. On publish: 1 slide →
+  a single IG IMAGE container / FB photo post; 2–10 slides → IG child
+  containers → a CAROUSEL container (same status walk as Reels) and an FB
+  multi-photo feed post (synchronous — publishes in a single step). Media
+  supplied as bare URLs skips normalization, so those must already be JPEG
+  and in range.
 - **Metrics** — every tick appends fresh snapshots (`social_metrics`) for
   targets published in the last 30 days whose numbers are older than 6 h.
   The Performance tab rolls them up; history is kept for trend charts later.

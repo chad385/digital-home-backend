@@ -34,7 +34,9 @@ import {
   PLATFORM_META,
   PlatformBadge,
   POST_STATUS_DOTS,
+  POST_STATUS_LABELS,
   postMetric,
+  PostStatusPill,
   PostTypeBadge,
   SocialNav,
   TARGET_STATUS_DOTS,
@@ -75,57 +77,190 @@ function toLocalInput(iso: string | null): string {
 function postDate(p: PostRow): string {
   return p.scheduled_at || p.published_at || p.created_at;
 }
+function fmtTime(iso: string | null): string {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+// ── image normalization (Instagram-legal, always JPEG) ───────────────────────
+
+/** Instagram feed accepts 4:5 (0.8) through 1.91:1. */
+const IG_MIN_RATIO = 0.8;
+const IG_MAX_RATIO = 1.91;
+const MAX_IMAGE_WIDTH = 1440;
+
+/**
+ * Make any picked image Instagram-legal before it ever hits storage: decode,
+ * center-crop to the nearest allowed ratio if out of range (a raw phone photo
+ * is 3:4 and IG rejects it), cap resolution, and re-encode as JPEG (the only
+ * format IG guarantees). The preview then shows exactly what will publish.
+ */
+async function normalizeImage(file: File): Promise<{ blob: Blob; cropped: boolean }> {
+  const bitmap = await createImageBitmap(file).catch(() => null);
+  if (!bitmap) throw new Error(`${file.name} is not a readable image — use JPG or PNG`);
+  const { width, height } = bitmap;
+  const ratio = width / height;
+  const target = ratio < IG_MIN_RATIO ? IG_MIN_RATIO : ratio > IG_MAX_RATIO ? IG_MAX_RATIO : ratio;
+  let cropW = width;
+  let cropH = height;
+  if (ratio < target) cropH = Math.round(width / target);
+  else if (ratio > target) cropW = Math.round(height * target);
+  const sx = Math.round((width - cropW) / 2);
+  const sy = Math.round((height - cropH) / 2);
+  const scale = Math.min(1, MAX_IMAGE_WIDTH / cropW);
+  const outW = Math.round(cropW * scale);
+  const outH = Math.round(cropH * scale);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = outW;
+  canvas.height = outH;
+  canvas.getContext('2d')!.drawImage(bitmap, sx, sy, cropW, cropH, 0, 0, outW, outH);
+  bitmap.close();
+  const blob = await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not process the image'))), 'image/jpeg', 0.9)
+  );
+  return { blob, cropped: target !== ratio };
+}
 
 // ── uploads (direct browser → storage, with progress) ────────────────────────
 
+/**
+ * Multipart upload to R2 through our own API — ~40MB parts, so there's no
+ * practical file-size cap and no third-party endpoints involved.
+ */
 async function uploadToStorage(
   file: File,
   onProgress: (pct: number) => void
 ): Promise<{ path: string; publicUrl: string }> {
-  const { signedUrl, path, publicUrl } = await api<{
-    signedUrl: string;
-    path: string;
+  const init = await api<{
+    key: string;
+    uploadId: string;
+    partSize: number;
     publicUrl: string;
+    token: string;
+    expiry: number;
   }>('/api/social/upload', {
     method: 'POST',
     body: JSON.stringify({ filename: file.name, contentType: file.type }),
   });
-  await new Promise<void>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', signedUrl);
-    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+
+  const putPart = (part: number, chunk: Blob, uploadedSoFar: number) =>
+    new Promise<string>((resolve, reject) => {
+      const params = new URLSearchParams({
+        key: init.key,
+        uploadId: init.uploadId,
+        part: String(part),
+        expiry: String(init.expiry),
+        token: init.token,
+      });
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', `/api/social/upload/part?${params}`);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onProgress(Math.min(99, Math.round(((uploadedSoFar + e.loaded) / file.size) * 100)));
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve((JSON.parse(xhr.responseText) as { etag: string }).etag);
+          } catch {
+            reject(new Error('Upload failed — bad part response'));
+          }
+        } else {
+          let message = `Upload failed (${xhr.status})`;
+          try {
+            message = (JSON.parse(xhr.responseText) as { error?: string }).error || message;
+          } catch {}
+          reject(new Error(message));
+        }
+      };
+      xhr.onerror = () => reject(new Error('Upload failed — network error'));
+      xhr.send(chunk);
+    });
+
+  const parts: Array<{ part: number; etag: string }> = [];
+  try {
+    for (let part = 1, offset = 0; offset < file.size || part === 1; part++, offset += init.partSize) {
+      const chunk = file.slice(offset, offset + init.partSize);
+      const etag = await putPart(part, chunk, offset);
+      parts.push({ part, etag });
+      if (offset + init.partSize >= file.size) break;
+    }
+    const done = await api<{ publicUrl: string }>('/api/social/upload/complete', {
+      method: 'POST',
+      body: JSON.stringify({
+        key: init.key,
+        uploadId: init.uploadId,
+        expiry: init.expiry,
+        token: init.token,
+        parts,
+      }),
+    });
+    onProgress(100);
+    return { path: init.key, publicUrl: done.publicUrl };
+  } catch (e) {
+    // Best effort: don't leave half-uploaded parts around.
+    api('/api/social/upload/complete', {
+      method: 'POST',
+      body: JSON.stringify({
+        key: init.key,
+        uploadId: init.uploadId,
+        expiry: init.expiry,
+        token: init.token,
+        abort: true,
+      }),
+    }).catch(() => {});
+    throw e;
+  }
+}
+
+/** Read a video file's pixel dimensions in the browser (null if unreadable). */
+function readVideoDims(file: File): Promise<{ w: number; h: number } | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.onloadedmetadata = () => {
+      resolve(v.videoWidth && v.videoHeight ? { w: v.videoWidth, h: v.videoHeight } : null);
+      URL.revokeObjectURL(url);
     };
-    xhr.onload = () =>
-      xhr.status >= 200 && xhr.status < 300
-        ? resolve()
-        : reject(new Error(`Upload failed (${xhr.status})`));
-    xhr.onerror = () => reject(new Error('Upload failed — network error'));
-    xhr.send(file);
+    v.onerror = () => {
+      resolve(null);
+      URL.revokeObjectURL(url);
+    };
+    v.src = url;
   });
-  return { path, publicUrl };
 }
 
 function useVideoUpload(show: (t: string, k?: 'ok' | 'err') => void) {
   const [progress, setProgress] = useState<number | null>(null);
   const [video, setVideo] = useState<{ path: string; publicUrl: string } | null>(null);
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+  // Kept on screen under the slot — a toast alone is easy to miss and the
+  // slot resetting to "Upload video" reads as a silent failure.
+  const [error, setError] = useState<string | null>(null);
 
   const upload = useCallback(
     async (file: File) => {
       setProgress(0);
+      setError(null);
+      setDims(null);
       try {
+        readVideoDims(file).then(setDims);
         setVideo(await uploadToStorage(file, setProgress));
         setProgress(null);
       } catch (e) {
         setProgress(null);
-        show(e instanceof Error ? e.message : 'Upload failed', 'err');
+        const message = e instanceof Error ? e.message : 'Upload failed';
+        setError(message);
+        show(message, 'err');
       }
     },
     [show]
   );
 
-  return { progress, video, setVideo, upload };
+  return { progress, video, setVideo, upload, error, dims };
 }
 
 // ── composer ─────────────────────────────────────────────────────────────────
@@ -138,6 +273,7 @@ function Composer({
   prefillDate,
   onClose,
   onSaved,
+  onPublishNow,
   show,
 }: {
   accounts: AccountRow[];
@@ -145,6 +281,7 @@ function Composer({
   prefillDate: string | null; // yyyy-mm-dd
   onClose: () => void;
   onSaved: () => void;
+  onPublishNow: (postId: string) => void;
   show: (t: string, k?: 'ok' | 'err') => void;
 }) {
   // Post type is chosen at creation and fixed once the post exists.
@@ -164,7 +301,13 @@ function Composer({
   const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const slideInput = useRef<HTMLInputElement>(null);
-  const { progress, video, setVideo, upload } = useVideoUpload(show);
+  const { progress, video, setVideo, upload, error: videoError, dims: videoDims } = useVideoUpload(show);
+  // Facebook Reels hard-requires 9:16; IG and YouTube adapt. iPhone screen
+  // recordings are 9:19.5 and die in FB's transcoder with a generic error.
+  const aspectWarning =
+    videoDims && Math.abs(videoDims.w / videoDims.h - 9 / 16) > 0.02
+      ? `This video is ${videoDims.w}×${videoDims.h} — not 9:16. Facebook Reels will reject it (Instagram and YouTube adapt). Export at 1080×1920, or untick Facebook.`
+      : null;
 
   const [slides, setSlides] = useState<Slide[]>(
     (editing?.media || []).map((m: MediaRow) => ({ path: m.path, url: m.url }))
@@ -206,10 +349,15 @@ function Composer({
     const room = MAX_SLIDES - slides.length;
     const list = Array.from(files).slice(0, room);
     if (files.length > room) show(`Carousels cap at ${MAX_SLIDES} slides`, 'err');
+    let croppedCount = 0;
     for (let i = 0; i < list.length; i++) {
       setSlideStatus(`Uploading ${i + 1}/${list.length}…`);
       try {
-        const { path, publicUrl } = await uploadToStorage(list[i], () => {});
+        const { blob, cropped } = await normalizeImage(list[i]);
+        if (cropped) croppedCount++;
+        const jpegName = list[i].name.replace(/\.[^.]+$/, '') + '.jpg';
+        const upload = new File([blob], jpegName, { type: 'image/jpeg' });
+        const { path, publicUrl } = await uploadToStorage(upload, () => {});
         setSlides((prev) => [...prev, { path, url: publicUrl }]);
       } catch (e) {
         show(e instanceof Error ? e.message : 'Upload failed', 'err');
@@ -217,6 +365,11 @@ function Composer({
       }
     }
     setSlideStatus(null);
+    if (croppedCount > 0) {
+      show(
+        `${croppedCount} image${croppedCount === 1 ? '' : 's'} auto-cropped to fit Instagram — check the previews`
+      );
+    }
     if (slideInput.current) slideInput.current.value = '';
   };
 
@@ -230,8 +383,6 @@ function Composer({
     });
   };
 
-  const [publishing, setPublishing] = useState(false);
-
   const save = async (mode: 'draft' | 'scheduled' | 'now') => {
     if (mode !== 'draft') {
       if (carousel && slides.length < 1) return show('Add at least 1 photo', 'err');
@@ -240,7 +391,6 @@ function Composer({
       if (selected.size === 0) return show('Pick at least one platform', 'err');
     }
     setBusy(true);
-    if (mode === 'now') setPublishing(true);
     try {
       const payload = {
         title: title || undefined,
@@ -274,28 +424,21 @@ function Composer({
         postId = post.id;
       }
 
+      // Publish-now is fire-and-forget: close the composer immediately and
+      // let the post card carry the Publishing → Published state.
       if (mode === 'now' && postId) {
-        // Same engine run as the detail modal's "Publish now" — inline, so
-        // Instagram usually finishes within this call.
-        const res = await api<{ targetsPublished: number; targetsProcessing: number }>(
-          `/api/social/posts/${postId}/publish`,
-          { method: 'POST', body: '{}' }
-        );
-        show(
-          res.targetsProcessing > 0
-            ? `Publishing — ${res.targetsPublished} live, ${res.targetsProcessing} still processing (finishes on the next engine run)`
-            : `Published ✓ (${res.targetsPublished} platform${res.targetsPublished === 1 ? '' : 's'})`
-        );
-      } else {
-        show(mode === 'scheduled' ? 'Scheduled ✓' : 'Draft saved');
+        onSaved();
+        onClose();
+        onPublishNow(postId);
+        return;
       }
+      show(mode === 'scheduled' ? 'Scheduled ✓' : 'Draft saved');
       onSaved();
       onClose();
     } catch (e) {
       show(e instanceof Error ? e.message : 'Save failed', 'err');
     } finally {
       setBusy(false);
-      setPublishing(false);
     }
   };
 
@@ -376,6 +519,12 @@ function Composer({
                   Replace video
                 </button>
               )}
+              {videoError && (
+                <p className="text-[11px] text-red-400 leading-snug">{videoError}</p>
+              )}
+              {!videoError && aspectWarning && (
+                <p className="text-[11px] text-yellow-500 leading-snug">{aspectWarning}</p>
+              )}
             </>
           ) : (
             <>
@@ -439,8 +588,9 @@ function Composer({
                   </button>
                 )}
                 <span className="text-[11px] text-zinc-600">
-                  JPG recommended — Instagram only guarantees JPEG ingest. 1 slide posts a
-                  single photo; 2–10 become a carousel, ordered top to bottom.
+                  Images are converted to JPEG and auto-cropped to Instagram&apos;s range
+                  (4:5–1.91:1) if needed — the preview is exactly what publishes. 1 slide
+                  posts a single photo; 2–10 become a carousel, ordered top to bottom.
                 </span>
               </div>
             </>
@@ -518,10 +668,10 @@ function Composer({
               Save draft
             </GhostBtn>
             <GhostBtn onClick={() => save('now')} disabled={busy || progress !== null || slideStatus !== null}>
-              {publishing ? 'Publishing…' : 'Post now'}
+              Post now
             </GhostBtn>
             <PrimaryBtn onClick={() => save('scheduled')} disabled={busy || progress !== null || slideStatus !== null}>
-              {busy && !publishing ? 'Saving…' : 'Schedule'}
+              {busy ? 'Saving…' : 'Schedule'}
             </PrimaryBtn>
           </div>
         </div>
@@ -537,12 +687,14 @@ function PostDetail({
   onClose,
   onEdit,
   onChanged,
+  onPublishNow,
   show,
 }: {
   post: PostRow;
   onClose: () => void;
   onEdit: () => void;
   onChanged: () => void;
+  onPublishNow: (postId: string) => void;
   show: (t: string, k?: 'ok' | 'err') => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -663,14 +815,12 @@ function PostDetail({
             {publishable && (
               <PrimaryBtn
                 disabled={busy}
-                onClick={() =>
-                  act(
-                    () => api(`/api/social/posts/${post.id}/publish`, { method: 'POST', body: '{}' }),
-                    post.status === 'failed' || post.status === 'partial'
-                      ? 'Retrying failed platforms…'
-                      : 'Publishing…'
-                  )
-                }
+                onClick={() => {
+                  // Fire-and-forget: the card on the calendar carries the
+                  // Publishing → Published state; a toast reports the result.
+                  onClose();
+                  onPublishNow(post.id);
+                }}
               >
                 {post.status === 'failed' || post.status === 'partial' ? 'Retry now' : 'Publish now'}
               </PrimaryBtn>
@@ -743,16 +893,6 @@ function MediaThumb({ post }: { post: PostRow }) {
   );
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  draft: 'Draft',
-  scheduled: 'Scheduled',
-  publishing: 'Publishing',
-  published: 'Published',
-  partial: 'Partial',
-  failed: 'Failed',
-  canceled: 'Canceled',
-};
-
 function ListView({
   posts,
   onOpen,
@@ -795,7 +935,7 @@ function ListView({
         </div>
         <Select value={status} onChange={(e) => setStatus(e.target.value)} className="w-40">
           <option value="">All statuses</option>
-          {Object.entries(STATUS_LABELS).map(([v, l]) => (
+          {Object.entries(POST_STATUS_LABELS).map(([v, l]) => (
             <option key={v} value={v}>
               {l}
             </option>
@@ -861,10 +1001,7 @@ function ListView({
                     <MediaThumb post={p} />
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
-                    <span className="inline-flex items-center gap-2">
-                      <span className={`w-1.5 h-1.5 rounded-full ${POST_STATUS_DOTS[p.status]}`} />
-                      <span className="text-[12px] text-zinc-400">{STATUS_LABELS[p.status]}</span>
-                    </span>
+                    <PostStatusPill status={p.status} />
                   </td>
                   <td className="px-3 py-2.5">
                     <PostTypeBadge type={p.post_type} slides={p.media?.length} />
@@ -939,6 +1076,43 @@ export default function SocialStudioPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  /**
+   * Fire-and-forget publish. The engine call runs inline server-side (it can
+   * take ~30s while Instagram transcodes), so the UI shows the post's
+   * Publishing state right away and toasts the outcome when the call lands.
+   */
+  const publishPost = useCallback(
+    (id: string) => {
+      show('Publishing…');
+      api<{ summary: { targetsPublished: number; targetsProcessing: number; targetsFailed: number } }>(
+        `/api/social/posts/${id}/publish`,
+        { method: 'POST', body: '{}' }
+      )
+        .then(({ summary }) => {
+          if (summary.targetsFailed > 0) {
+            show('Some platforms failed — open the post for details', 'err');
+          } else if (summary.targetsProcessing > 0) {
+            show('Still processing — it finishes automatically');
+          } else {
+            show('Published ✓');
+          }
+        })
+        .catch((e) => show(e instanceof Error ? e.message : 'Publish failed', 'err'))
+        .finally(load);
+      // Reflect the Publishing state on the card immediately.
+      setTimeout(load, 600);
+    },
+    [load, show]
+  );
+
+  // While anything is mid-publish, keep the board fresh so Publishing flips
+  // to Published without a manual reload (covers cron-finished posts too).
+  useEffect(() => {
+    if (!posts?.some((p) => p.status === 'publishing')) return;
+    const t = setTimeout(load, 8000);
+    return () => clearTimeout(t);
+  }, [posts, load]);
 
   const runEngine = async () => {
     setTicking(true);
@@ -1026,7 +1200,11 @@ export default function SocialStudioPage() {
       {toastNode}
       <PageHeader title="Social">
         {viewToggle}
-        <GhostBtn onClick={runEngine} disabled={ticking}>
+        <GhostBtn
+          onClick={runEngine}
+          disabled={ticking}
+          title="Run the scheduler now instead of waiting for the cron: publishes any due scheduled posts, checks on Instagram/Facebook processing, and refreshes metrics"
+        >
           {ticking ? 'Running…' : 'Run engine'}
         </GhostBtn>
         <PrimaryBtn onClick={() => setComposer({ editing: null, date: null })}>New post</PrimaryBtn>
@@ -1077,12 +1255,12 @@ export default function SocialStudioPage() {
                     <div
                       key={i}
                       onClick={() => setComposer({ editing: null, date: key })}
-                      className={`min-h-[96px] p-1.5 border-b border-r border-minimal-border/60 cursor-pointer transition-colors hover:bg-minimal-row/50 ${
+                      className={`min-h-[132px] p-1.5 border-b border-r border-minimal-border/60 cursor-pointer transition-colors hover:bg-minimal-row/50 ${
                         inMonth ? '' : 'opacity-40'
                       } ${i % 7 === 6 ? 'border-r-0' : ''} ${i >= 35 ? 'border-b-0' : ''}`}
                     >
                       <div
-                        className={`text-[11px] font-medium mb-1 px-1 ${
+                        className={`text-[11px] font-medium mb-1.5 px-1 ${
                           key === todayKey
                             ? 'text-black bg-white rounded w-5 h-5 flex items-center justify-center'
                             : 'text-zinc-500'
@@ -1090,43 +1268,66 @@ export default function SocialStudioPage() {
                       >
                         {day.getDate()}
                       </div>
-                      <div className="flex flex-col gap-1">
-                        {dayPosts.slice(0, 3).map((p) => (
+                      <div className="flex flex-col gap-1.5">
+                        {dayPosts.slice(0, 2).map((p) => (
                           <button
                             key={p.id}
                             onClick={(e) => {
                               e.stopPropagation();
                               setDetail(p);
                             }}
-                            className="w-full text-left px-1.5 py-1 rounded bg-minimal-row hover:bg-minimal-border/60 transition-colors"
+                            className="w-full text-left rounded-lg border border-minimal-border bg-minimal-row overflow-hidden hover:border-zinc-500 transition-colors"
                           >
-                            <span className="flex items-center gap-1.5">
-                              <span
-                                className={`w-1.5 h-1.5 rounded-full shrink-0 ${POST_STATUS_DOTS[p.status]}`}
-                              />
-                              {p.post_type === 'carousel' && (
-                                <span className="text-[9px] text-zinc-500 shrink-0" title="Carousel">
-                                  ▦
-                                </span>
-                              )}
-                              <span className="text-[11px] text-zinc-300 truncate">
-                                {p.title || p.caption.split('\n')[0] || 'Untitled'}
+                            <div className="px-2 pt-1.5 flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-medium text-zinc-500">
+                                {fmtTime(p.scheduled_at || p.published_at)}
                               </span>
-                            </span>
-                            <span className="flex items-center gap-1.5 mt-0.5 pl-3">
-                              {p.targets.map((t) => (
-                                <span
-                                  key={t.id}
-                                  className={`w-1 h-1 rounded-full ${PLATFORM_META[t.platform].dot}`}
-                                  title={PLATFORM_META[t.platform].label}
-                                />
-                              ))}
-                            </span>
+                              <span className="flex items-center gap-1">
+                                {p.targets.map((t) => (
+                                  <span
+                                    key={t.id}
+                                    className={`w-1.5 h-1.5 rounded-full ${PLATFORM_META[t.platform].dot}`}
+                                    title={PLATFORM_META[t.platform].label}
+                                  />
+                                ))}
+                              </span>
+                            </div>
+                            <p className="px-2 pt-1 text-[11px] leading-snug text-zinc-300 line-clamp-2">
+                              {p.title || p.caption.split('\n')[0] || 'Untitled'}
+                            </p>
+                            {(p.post_type === 'carousel' ? p.media?.[0] : p.video_url) && (
+                              <div className="px-2 pt-1.5 relative">
+                                {p.post_type === 'carousel' ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={p.media[0].url}
+                                    alt=""
+                                    className="w-full h-16 object-cover rounded"
+                                  />
+                                ) : (
+                                  <video
+                                    src={p.video_url!}
+                                    className="w-full h-16 object-cover rounded"
+                                    muted
+                                    playsInline
+                                    preload="metadata"
+                                  />
+                                )}
+                                {p.post_type === 'carousel' && p.media.length > 1 && (
+                                  <span className="absolute bottom-1 right-3 px-1 text-[9px] font-semibold bg-black/70 text-white rounded">
+                                    {p.media.length}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            <div className="px-2 py-1.5">
+                              <PostStatusPill status={p.status} />
+                            </div>
                           </button>
                         ))}
-                        {dayPosts.length > 3 && (
+                        {dayPosts.length > 2 && (
                           <span className="text-[10px] text-zinc-600 px-1.5">
-                            +{dayPosts.length - 3} more
+                            +{dayPosts.length - 2} more
                           </span>
                         )}
                       </div>
@@ -1232,6 +1433,7 @@ export default function SocialStudioPage() {
           prefillDate={composer.date}
           onClose={() => setComposer(null)}
           onSaved={load}
+          onPublishNow={publishPost}
           show={show}
         />
       )}
@@ -1244,6 +1446,7 @@ export default function SocialStudioPage() {
             setDetail(null);
           }}
           onChanged={load}
+          onPublishNow={publishPost}
           show={show}
         />
       )}

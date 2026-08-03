@@ -24,7 +24,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (!["draft", "scheduled", "failed", "partial", "canceled"].includes(post.status)) {
     return NextResponse.json({ error: `Post is already ${post.status}` }, { status: 409 });
   }
-  if (!post.video_url) {
+  if (post.post_type === "carousel") {
+    const { count: slideCount } = await supabase
+      .from("social_post_media")
+      .select("id", { count: "exact", head: true })
+      .eq("post_id", id);
+    if (!slideCount) {
+      return NextResponse.json({ error: "Attach at least 1 photo before publishing" }, { status: 400 });
+    }
+  } else if (!post.video_url) {
     return NextResponse.json({ error: "Attach a video before publishing" }, { status: 400 });
   }
   const { count } = await supabase

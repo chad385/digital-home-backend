@@ -13,10 +13,39 @@ import {
   CAROUSEL_MIN_SLIDES,
   CAROUSEL_PLATFORMS,
 } from "@/lib/social/types";
+import { deleteMediaObjects } from "@/lib/social/upload";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
 const EDITABLE_STATUSES = ["draft", "scheduled", "canceled", "failed"];
+
+/**
+ * Of these storage paths, the ones no OTHER post still references — as a
+ * carousel slide or as a video. Duplicated posts (e.g. a retried composer
+ * save) share the same uploaded object, and deleting one post must never
+ * yank the file out from under its sibling mid-publish.
+ */
+async function unreferencedPaths(
+  supabase: ReturnType<typeof createAdminClient>,
+  postId: string,
+  candidates: string[]
+): Promise<string[]> {
+  if (!candidates.length) return [];
+  const still = new Set<string>();
+  const { data: mediaRefs } = await supabase
+    .from("social_post_media")
+    .select("path")
+    .in("path", candidates)
+    .neq("post_id", postId);
+  for (const r of mediaRefs || []) if (r.path) still.add(r.path);
+  const { data: videoRefs } = await supabase
+    .from("social_posts")
+    .select("video_path")
+    .in("video_path", candidates)
+    .neq("id", postId);
+  for (const r of videoRefs || []) if (r.video_path) still.add(r.video_path);
+  return candidates.filter((p) => !still.has(p));
+}
 
 export async function GET(request: NextRequest, context: RouteContext) {
   const auth = await authenticateSessionOrApiKey(request, { allowRoles: ["admin", "social"] });
@@ -128,10 +157,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         return NextResponse.json({ error: mediaError.message }, { status: 500 });
       }
     }
-    if (orphanPaths.length) {
-      // Best-effort; a dangling object in the bucket is harmless.
-      await supabase.storage.from("social-videos").remove(orphanPaths);
-    }
+    const removable = await unreferencedPaths(supabase, id, orphanPaths);
+    await deleteMediaObjects(supabase, removable);
     mediaAfterEdit = incoming;
   }
 
@@ -234,14 +261,11 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     .from("social_post_media")
     .select("path")
     .eq("post_id", id);
-  const paths = [
+  const paths = await unreferencedPaths(supabase, id, [
     ...(post.video_path ? [post.video_path] : []),
     ...(mediaRows || []).map((m) => m.path).filter((p): p is string => Boolean(p)),
-  ];
-  if (paths.length) {
-    // Best-effort; a dangling object in the bucket is harmless.
-    await supabase.storage.from("social-videos").remove(paths);
-  }
+  ]);
+  await deleteMediaObjects(supabase, paths);
   const { error } = await supabase.from("social_posts").delete().eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

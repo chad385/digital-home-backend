@@ -94,6 +94,39 @@ export const POST_STATUS_DOTS: Record<string, string> = {
   canceled: 'bg-zinc-600',
 };
 
+export const POST_STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  scheduled: 'Scheduled',
+  publishing: 'Publishing',
+  published: 'Published',
+  partial: 'Partial',
+  failed: 'Failed',
+  canceled: 'Canceled',
+};
+
+const POST_STATUS_PILLS: Record<string, string> = {
+  draft: 'bg-zinc-500/15 text-zinc-400',
+  scheduled: 'bg-blue-500/15 text-blue-400',
+  publishing: 'bg-yellow-500/15 text-yellow-500',
+  published: 'bg-green-500/15 text-green-500',
+  partial: 'bg-orange-500/15 text-orange-400',
+  failed: 'bg-red-500/15 text-red-400',
+  canceled: 'bg-zinc-500/15 text-zinc-500',
+};
+
+/** GHL-style status pill ("Scheduled" / "Published" …) for post cards. */
+export function PostStatusPill({ status }: { status: string }) {
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+        POST_STATUS_PILLS[status] || 'bg-zinc-500/15 text-zinc-400'
+      }`}
+    >
+      {POST_STATUS_LABELS[status] || status}
+    </span>
+  );
+}
+
 export const TARGET_STATUS_DOTS: Record<string, string> = {
   pending: 'bg-zinc-500',
   publishing: 'bg-yellow-500',
