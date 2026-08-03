@@ -36,6 +36,12 @@
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    // The custom worker entrypoint imports .open-next/worker.js, which
+    // `opennextjs-cloudflare build` only generates AFTER `next build` runs —
+    // so Next can never resolve it and fails the build. Wrangler bundles
+    // worker.ts separately at deploy time.
+    "worker.ts",
+    ".open-next"
   ]
 }

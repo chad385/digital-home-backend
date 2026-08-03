@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "opennextjs-cloudflare build",
-    "dev": "next dev -p 3001",
+    "dev": "next dev -p ${PORT:-3001}",
     "start": "next start",
     "lint": "eslint",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
@@ -32,6 +32,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.7.0",
+    "marked": "^16.4.2",
     "next": "^16.2.4",
     "openai": "^6.32.0",
     "react": "^19.2.3",
@@ -47,6 +48,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "^16.2.4",
+    "pg": "^8.22.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "wrangler": "^4.86.0"

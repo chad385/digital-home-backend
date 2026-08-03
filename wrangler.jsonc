@@ -1,7 +1,18 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "main": ".open-next/worker.js",
+  // worker.ts wraps OpenNext's generated handler to add `scheduled` — see the
+  // file header. Reverting to ".open-next/worker.js" disables the cron and
+  // restores stock OpenNext behaviour.
+  "main": "worker.ts",
   "name": "digital-home-backend",
+  // The CRM engine tick + social publish tick. Was a GitHub Action; GitHub
+  // throttles scheduled workflows, which stalls onboarding email.
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+  // Keep the workers.dev URL alive; add a custom-domain route here when you
+  // claim one, e.g. { "pattern": "backend.yourdomain.com", "custom_domain": true }
+  "workers_dev": true,
   "compatibility_date": "2026-05-01",
   "compatibility_flags": [
     "nodejs_compat"
