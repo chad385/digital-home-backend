@@ -874,6 +874,23 @@ function PostDetail({
               </PrimaryBtn>
             )}
             {editable && <GhostBtn onClick={onEdit}>Edit</GhostBtn>}
+            {['scheduled', 'canceled', 'failed'].includes(post.status) && (
+              <GhostBtn
+                disabled={busy}
+                onClick={() =>
+                  act(
+                    () =>
+                      api(`/api/social/posts/${post.id}`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({ status: 'draft' }),
+                      }),
+                    'Moved to draft'
+                  )
+                }
+              >
+                Move to draft
+              </GhostBtn>
+            )}
             {post.status === 'scheduled' && (
               <GhostBtn
                 disabled={busy}

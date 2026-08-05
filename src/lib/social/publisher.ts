@@ -57,7 +57,9 @@ async function beginCarouselPublish(
   const images = media
     .filter((m) => m.kind === "image")
     .sort((a, b) => a.position - b.position)
-    .map((m) => m.url);
+    // IG caches media-fetch failures per URL (code 9004): on a retry, a
+    // cache-busting param makes Meta fetch fresh instead of re-failing.
+    .map((m) => (target.attempts > 0 ? `${m.url}${m.url.includes("?") ? "&" : "?"}r=${target.attempts}` : m.url));
   if (images.length < 1) {
     return { state: "failed", error: "Image post has no slides attached" };
   }
@@ -231,13 +233,26 @@ async function rollupPost(supabase: AdminClient, postId: string): Promise<void> 
     .eq("post_id", postId);
   if (!targets?.length) return;
 
-  const counts = { active: 0, published: 0, failed: 0 };
+  const counts = { inFlight: 0, pending: 0, published: 0, failed: 0 };
   for (const t of targets) {
-    if (["pending", "publishing", "processing"].includes(t.status)) counts.active++;
+    if (["publishing", "processing"].includes(t.status)) counts.inFlight++;
+    else if (t.status === "pending") counts.pending++;
     else if (t.status === "published") counts.published++;
     else if (t.status === "failed") counts.failed++;
   }
-  if (counts.active > 0) return;
+  if (counts.inFlight > 0) return;
+  if (counts.pending > 0) {
+    // Nothing is actually in flight at a platform — every remaining target is
+    // waiting on a retry. Demote back to "scheduled" so the post stays
+    // editable/cancellable instead of locked in "publishing" (a post stuck
+    // there previously needed manual DB surgery to recover, 2026-08-05).
+    await supabase
+      .from("social_posts")
+      .update({ status: "scheduled" })
+      .eq("id", postId)
+      .eq("status", "publishing");
+    return;
+  }
 
   const status =
     counts.published === 0 ? "failed" : counts.failed === 0 ? "published" : "partial";

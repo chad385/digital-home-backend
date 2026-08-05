@@ -2,6 +2,19 @@
 
 All notable changes to the Digital Home Backend Starter.
 
+## [2.5.2] — 2026-08-05
+
+Publish-engine resilience, straight from a real-world failed publish:
+
+- A post whose platform publishes all fail mid-retry no longer locks in
+  "publishing" (uneditable) — it returns to "scheduled" between attempts,
+  so it stays editable and cancellable.
+- Instagram image retries now cache-bust the media URL. IG caches
+  per-URL fetch failures (error code 9004), so bare retries of the same
+  URL could never succeed.
+- New "Move to draft" action in the studio on scheduled, canceled, and
+  failed posts.
+
 ## [2.5.1] — 2026-08-03
 
 Social calendar fixes, straight from production use:
