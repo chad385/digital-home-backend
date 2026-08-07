@@ -89,7 +89,9 @@ const MIME = {
 /** Instagram feed accepts 4:5 (0.8) through 1.91:1. */
 const IG_MIN_RATIO = 0.8;
 const IG_MAX_RATIO = 1.91;
-const MAX_NORMALIZED_VIDEO_BYTES = 45 * 1024 * 1024;
+const TARGET_NORMALIZED_VIDEO_BYTES = 58 * 1024 * 1024;
+const MAX_NORMALIZED_VIDEO_BYTES = 60 * 1024 * 1024;
+const MAX_VIDEO_BITRATE = 8_000_000;
 
 function mediaTool(name) {
   const bundled = join(homedir(), 'bin', name);
@@ -129,7 +131,8 @@ function normalizeImage(filePath) {
 /**
  * Normalize every video, even when it is already 9:16. Raw screen captures can
  * be 100–200 MB despite having the right dimensions; the bounded H.264 encode
- * keeps a typical Reel below 50 MB and pads off-ratio inputs without cropping.
+ * keeps a typical one-minute Reel around 55–60 MB and pads off-ratio inputs
+ * without cropping.
  * Fail closed if ffmpeg is unavailable so an unsafe raw file cannot be queued.
  */
 function normalizeVideo(filePath) {
@@ -146,23 +149,25 @@ function normalizeVideo(filePath) {
     }
     // Leave room for 128 kbps audio and container overhead. Longer Shorts get
     // a lower ceiling so the normalized output remains safe for every API hop.
-    const sizeBoundBitrate = Math.floor((MAX_NORMALIZED_VIDEO_BYTES * 8) / duration - 192_000);
-    const videoBitrate = Math.max(1_200_000, Math.min(6_000_000, sizeBoundBitrate));
+    const sizeBoundBitrate = Math.floor((TARGET_NORMALIZED_VIDEO_BYTES * 8) / duration - 192_000);
+    const videoBitrate = Math.max(1_200_000, Math.min(MAX_VIDEO_BITRATE, sizeBoundBitrate));
     const out = join(tmpdir(), `social-post-${randomUUID()}.mp4`);
     execFileSync(mediaTool('ffmpeg'), [
       '-y', '-i', filePath,
       '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black',
       '-map', '0:v:0', '-map', '0:a?', '-r', '30',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+      '-c:v', 'libx264', '-preset', 'veryfast',
+      '-b:v', `${Math.floor(videoBitrate / 1000)}k`,
       '-maxrate', `${Math.floor(videoBitrate / 1000)}k`,
       '-bufsize', `${Math.floor((videoBitrate * 2) / 1000)}k`,
       '-pix_fmt', 'yuv420p',
       '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
       out,
     ], { stdio: 'pipe' });
-    const outputMb = statSync(out).size / 1024 / 1024;
-    if (outputMb > 50) {
-      throw new Error(`normalized video is still ${outputMb.toFixed(1)} MB (50 MB safety limit)`);
+    const outputBytes = statSync(out).size;
+    const outputMb = outputBytes / 1024 / 1024;
+    if (outputBytes > MAX_NORMALIZED_VIDEO_BYTES) {
+      throw new Error(`normalized video is still ${outputMb.toFixed(1)} MB (60 MB safety limit)`);
     }
     console.log(
       `  normalized ${basename(filePath)} ${w}x${h} → 1080x1920 H.264 ` +
@@ -172,7 +177,7 @@ function normalizeVideo(filePath) {
   } catch (e) {
     throw new Error(
       `Video normalization failed for ${basename(filePath)}: ${String(e.message).split('\n')[0]}. ` +
-      `Install ffmpeg or export a 1080x1920 H.264 file under 50 MB.`
+      `Install ffmpeg or export a 1080x1920 H.264 file under 60 MB.`
     );
   }
 }

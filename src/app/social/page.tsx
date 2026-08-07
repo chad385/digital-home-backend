@@ -235,7 +235,9 @@ function readVideoDims(file: File): Promise<{ w: number; h: number } | null> {
 
 const NORMALIZED_VIDEO_WIDTH = 1080;
 const NORMALIZED_VIDEO_HEIGHT = 1920;
-const MAX_NORMALIZED_VIDEO_BYTES = 45 * 1024 * 1024;
+const TARGET_NORMALIZED_VIDEO_BYTES = 58 * 1024 * 1024;
+const MAX_NORMALIZED_VIDEO_BYTES = 60 * 1024 * 1024;
+const MAX_VIDEO_BITRATE = 8_000_000;
 
 function supportedMp4RecorderType(): string | null {
   if (typeof MediaRecorder === 'undefined') return null;
@@ -260,7 +262,7 @@ async function normalizeVideo(
   const mimeType = supportedMp4RecorderType();
   if (!mimeType || typeof HTMLCanvasElement.prototype.captureStream !== 'function') {
     throw new Error(
-      'This browser cannot compress video to H.264. Use current Chrome or Safari, or export a 1080×1920 H.264 MP4 under 50 MB.'
+      'This browser cannot compress video to H.264. Use current Chrome or Safari, or export a 1080×1920 H.264 MP4 under 60 MB.'
     );
   }
 
@@ -310,8 +312,8 @@ async function normalizeVideo(
 
   // Keep enough room for 128 kbps audio and MP4 overhead. Long Shorts receive
   // a lower ceiling so the result stays below the same safe payload limit.
-  const sizeBoundBitrate = Math.floor((MAX_NORMALIZED_VIDEO_BYTES * 8) / video.duration - 192_000);
-  const videoBitsPerSecond = Math.max(1_200_000, Math.min(6_000_000, sizeBoundBitrate));
+  const sizeBoundBitrate = Math.floor((TARGET_NORMALIZED_VIDEO_BYTES * 8) / video.duration - 192_000);
+  const videoBitsPerSecond = Math.max(1_200_000, Math.min(MAX_VIDEO_BITRATE, sizeBoundBitrate));
   const recorder = new MediaRecorder(outputStream, {
     mimeType,
     videoBitsPerSecond,
@@ -359,9 +361,9 @@ async function normalizeVideo(
 
   const blob = new Blob(chunks, { type: 'video/mp4' });
   if (!blob.size) throw new Error('The browser video encoder produced an empty file');
-  if (blob.size > 50 * 1024 * 1024) {
+  if (blob.size > MAX_NORMALIZED_VIDEO_BYTES) {
     throw new Error(
-      `Compressed video is ${(blob.size / 1024 / 1024).toFixed(1)} MB. Export an H.264 MP4 under 50 MB before scheduling.`
+      `Compressed video is ${(blob.size / 1024 / 1024).toFixed(1)} MB. Export an H.264 MP4 under 60 MB before scheduling.`
     );
   }
   const stem = file.name.replace(/\.[^.]+$/, '') || 'reel';
