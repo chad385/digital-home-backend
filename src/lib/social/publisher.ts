@@ -22,7 +22,12 @@ import {
   igCreateContainer,
   igCreateImagePost,
 } from "./meta";
-import { googleRefreshAccessToken, ytUploadVideo } from "./youtube";
+import {
+  googleRefreshAccessToken,
+  type YouTubeUploadRef,
+  ytResumeVideoUpload,
+  ytStartVideoUpload,
+} from "./youtube";
 import { refreshDueMetrics } from "./metrics";
 
 const MAX_ATTEMPTS = 3;
@@ -122,6 +127,19 @@ async function beginPublish(
   account: SocialAccount,
   media: SocialMedia[]
 ): Promise<PublishStep> {
+  // Absolute backstop: a target with a final platform id must never enter any
+  // platform's create/upload path again, regardless of its local status.
+  if (target.external_id) {
+    return {
+      state: "published",
+      externalId: target.external_id,
+      externalUrl:
+        target.external_url ||
+        (target.platform === "youtube"
+          ? `https://www.youtube.com/shorts/${target.external_id}`
+          : null),
+    };
+  }
   if (post.post_type === "carousel") {
     return beginCarouselPublish(post, target, account, media);
   }
@@ -154,15 +172,21 @@ async function beginPublish(
     return { state: "processing", ref: { video_id: videoId } };
   }
 
-  // YouTube — synchronous upload; the video id is final once bytes land.
+  // YouTube is two-phase: persist the session URI on this tick, then upload
+  // chunks on the next. No bytes move until retry state is durable.
   if (!account.refresh_token) return { state: "failed", error: "YouTube channel has no refresh token" };
   const accessToken = await googleRefreshAccessToken(account.refresh_token);
-  const uploaded = await ytUploadVideo(accessToken, {
+  const existingRef = (target.platform_ref || {}) as Partial<YouTubeUploadRef>;
+  if (existingRef.youtube_upload_url) {
+    const uploaded = await ytResumeVideoUpload(accessToken, existingRef as YouTubeUploadRef);
+    return { state: "published", externalId: uploaded.videoId, externalUrl: uploaded.url };
+  }
+  const ref = await ytStartVideoUpload(accessToken, {
     videoUrl: post.video_url,
     title: post.title || caption.split("\n")[0]?.slice(0, 100) || "Short",
     description: caption,
   });
-  return { state: "published", externalId: uploaded.videoId, externalUrl: uploaded.url };
+  return { state: "processing", ref: { ...ref } };
 }
 
 /** Poll step for a target already in `processing`. */
@@ -171,14 +195,18 @@ async function continuePublish(
   account: SocialAccount
 ): Promise<PublishStep> {
   const ref = (target.platform_ref || {}) as Record<string, unknown>;
-  if (!account.access_token) return { state: "failed", error: "Account token missing" };
   if (target.platform === "instagram") {
+    if (!account.access_token) return { state: "failed", error: "Instagram account token missing" };
     return igAdvance(account.external_id, account.access_token, ref);
   }
   if (target.platform === "facebook") {
+    if (!account.access_token) return { state: "failed", error: "Facebook account token missing" };
     return fbAdvance(account.external_id, account.access_token, ref);
   }
-  return { state: "failed", error: "YouTube targets never enter processing" };
+  if (!account.refresh_token) return { state: "failed", error: "YouTube channel has no refresh token" };
+  const accessToken = await googleRefreshAccessToken(account.refresh_token);
+  const uploaded = await ytResumeVideoUpload(accessToken, ref as unknown as YouTubeUploadRef);
+  return { state: "published", externalId: uploaded.videoId, externalUrl: uploaded.url };
 }
 
 async function applyStep(
@@ -212,12 +240,14 @@ async function applyStep(
   } else {
     const attempts = target.attempts + attemptsDelta;
     // Processing failures are terminal (the platform rejected the video);
-    // pending failures retry until MAX_ATTEMPTS in case it was transient.
-    const terminal = target.status !== "pending" || attempts >= MAX_ATTEMPTS;
+    // pending failures retry until MAX_ATTEMPTS in case it was transient. A
+    // YouTube transport failure is explicitly retryable because its durable
+    // session can resume without creating another upload.
+    const terminal = (!step.retryable && target.status !== "pending") || attempts >= MAX_ATTEMPTS;
     await supabase
       .from("social_post_targets")
       .update({
-        status: terminal ? "failed" : "pending",
+        status: terminal ? "failed" : target.status === "processing" ? "processing" : "pending",
         error: step.error.slice(0, 1000),
         attempts,
       })
@@ -337,6 +367,27 @@ export async function runSocialTick(
       };
       touchedPosts.add(target.post_id);
       try {
+        // Repair impossible-but-dangerous state before doing anything else.
+        // This also makes the anti-duplicate guard effective if an earlier DB
+        // update saved external_id but failed before saving status.
+        if (target.external_id) {
+          await applyStep(
+            supabase,
+            target,
+            {
+              state: "published",
+              externalId: target.external_id,
+              externalUrl:
+                target.external_url ||
+                (target.platform === "youtube"
+                  ? `https://www.youtube.com/shorts/${target.external_id}`
+                  : null),
+            },
+            0
+          );
+          summary.targetsPublished++;
+          continue;
+        }
         // Carousels have no YouTube analogue — park the target as skipped
         // instead of failing the whole post.
         if (target.post.post_type === "carousel" && target.platform === "youtube") {
@@ -383,8 +434,24 @@ export async function runSocialTick(
         const message = e instanceof Error ? e.message : String(e);
         summary.errors.push(`target ${target.id}: ${message}`);
         try {
-          await applyStep(supabase, target, { state: "failed", error: message }, 1);
-          summary.targetsFailed++;
+          const retryingYouTube =
+            target.platform === "youtube" &&
+            target.status === "processing" &&
+            target.attempts + 1 < MAX_ATTEMPTS;
+          await applyStep(
+            supabase,
+            target,
+            {
+              state: "failed",
+              error: message,
+              // Transport/session failures can resume from Google's accepted
+              // offset. Never throw away a persisted YouTube session early.
+              retryable: target.platform === "youtube" && target.status === "processing",
+            },
+            1
+          );
+          if (retryingYouTube) summary.targetsProcessing++;
+          else summary.targetsFailed++;
         } catch {
           // row update failed too — leave for next tick
         }
