@@ -18,8 +18,8 @@ customizations are intentional: **merge, don't overwrite.** When a file
 conflicts, prefer their copy design-wise and add the new capability into it.
 
 ### Step 0 — Determine current version
-- If a `VERSION` file exists, read it. If it says `2.5.2` or higher, stop —
-  already up to date. If it says `2.5.0` or `2.5.1`, apply ONLY the "Patch upgrades"
+- If a `VERSION` file exists, read it. If it says `2.5.3` or higher, stop —
+  already up to date. If it says `2.5.0`, `2.5.1` or `2.5.2`, apply ONLY the "Patch upgrades"
   section at the bottom of this guide.
 - No `VERSION` file = v1.x (content pipeline era). Apply the full v2.5.0
   upgrade below.
@@ -29,15 +29,15 @@ conflicts, prefer their copy design-wise and add the new capability into it.
 ### Step 1 — Preflight
 1. `git status` — if there are uncommitted changes, commit or stash them
    first so the upgrade is revertible.
-2. Create a branch: `git checkout -b upgrade/v2.5.2`.
+2. Create a branch: `git checkout -b upgrade/v2.5.3`.
 3. Add the starter as a remote if missing:
    `git remote add starter https://github.com/lukesbrave/digital-home-backend.git`
    then `git fetch starter --tags`.
 
 ### Step 2 — Bring in the latest version
-1. Diff `git diff HEAD..v2.5.2 --stat` to see scope.
+1. Diff `git diff HEAD..v2.5.3 --stat` to see scope.
 2. New files (the vast majority) can be checked out directly:
-   `git checkout v2.5.2 -- <path>` for: `src/lib/crm/`, `src/lib/social/`,
+   `git checkout v2.5.3 -- <path>` for: `src/lib/crm/`, `src/lib/social/`,
    `src/app/api/crm/`, `src/app/api/social/`, `src/app/api/settings/`,
    `src/app/api/webhooks/`, `src/app/crm/`, `src/app/social/`,
    `src/components/crm/`, `worker.ts`, `scripts/deploy.sh`,
@@ -82,7 +82,7 @@ conflicts, prefer their copy design-wise and add the new capability into it.
    activity entry and an opportunity in the first stage.
 4. Draft a 2-step test workflow, enroll yourself, run "Run engine now" —
    the send appears as `simulated` in the sent-email viewer.
-5. Commit, merge the branch, deploy. Done — `VERSION` should read `2.5.2`
+5. Commit, merge the branch, deploy. Done — `VERSION` should read `2.5.3`
    (it comes along with the checkout).
 
 ### If something breaks
@@ -93,15 +93,26 @@ branch until merged). The migration is additive and safe to leave applied.
 
 Fetch the starter remote first: `git fetch starter --tags`.
 
-**From 2.5.1 → 2.5.2** — take the patched files directly:
+**From 2.5.2 → 2.5.3** — take the patched files directly:
 
-    git checkout v2.5.2 -- "src/lib/social/publisher.ts" "src/app/social/page.tsx" VERSION CHANGELOG.md
+    git checkout v2.5.3 -- "src/lib/social/meta.ts" "src/lib/social/metrics.ts" "src/lib/social/publisher.ts" "src/app/api/social/tick/route.ts" SOCIAL.md VERSION CHANGELOG.md
 
-**From 2.5.0 → 2.5.2** — apply the 2.5.1 files first, then the above:
+**From 2.5.1 → 2.5.3** — add the 2.5.2 studio file, then the above:
+
+    git checkout v2.5.2 -- "src/app/social/page.tsx"
+    git checkout v2.5.3 -- "src/lib/social/meta.ts" "src/lib/social/metrics.ts" "src/lib/social/publisher.ts" "src/app/api/social/tick/route.ts" SOCIAL.md VERSION CHANGELOG.md
+
+**From 2.5.0 → 2.5.3** — apply the 2.5.1 files first, then both of the above:
 
     git checkout v2.5.1 -- "src/app/api/social/accounts/route.ts" "src/app/social/accounts/page.tsx"
-    git checkout v2.5.2 -- "src/lib/social/publisher.ts" "src/app/social/page.tsx" VERSION CHANGELOG.md
+    git checkout v2.5.2 -- "src/app/social/page.tsx"
+    git checkout v2.5.3 -- "src/lib/social/meta.ts" "src/lib/social/metrics.ts" "src/lib/social/publisher.ts" "src/app/api/social/tick/route.ts" SOCIAL.md VERSION CHANGELOG.md
 
 If the member has customized any of these files, merge instead of
 overwrite. Then build, verify the social studio loads, and deploy.
 No database changes in these patches.
+
+**After upgrading to 2.5.3, check your Meta token scopes.** If Instagram
+reach/views/saves read zero while likes record fine, the token is missing
+`instagram_manage_insights` — re-mint it with that permission ticked
+(SOCIAL.md step 4) and reconnect.

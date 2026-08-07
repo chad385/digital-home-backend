@@ -2,6 +2,24 @@
 
 All notable changes to the Digital Home Backend Starter.
 
+## [2.5.3] — 2026-08-06
+
+Performance metrics actually record now. Three faults were stacking up, and
+a silent `catch` was hiding all of them — a tick would report success while
+capturing nothing at all:
+
+- Instagram likes and comments now come from the media object, so engagement
+  records even when insights are unavailable. Reach, views and saves need the
+  `instagram_manage_insights` permission — see SOCIAL.md, it is not in Meta's
+  default scope set.
+- Facebook stopped requesting `post_impressions` / `post_impressions_unique`,
+  which Meta retired from the Graph API; asking for them failed the whole
+  call, so Facebook recorded nothing.
+- Metric fetch failures now surface in the tick summary instead of being
+  swallowed.
+- `POST /api/social/tick` accepts `metricsForce: true` to bypass the 6-hour
+  snapshot gate when you want fresh numbers immediately.
+
 ## [2.5.2] — 2026-08-05
 
 Publish-engine resilience, straight from a real-world failed publish:

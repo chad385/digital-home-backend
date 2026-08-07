@@ -17,8 +17,14 @@ export async function POST(request: NextRequest) {
   const auth = await authenticateSessionOrApiKey(request, { allowRoles: ["admin", "social"] });
   if (!auth.authenticated) return unauthorizedResponse(auth.error);
 
-  const body = (await request.json().catch(() => ({}))) as { metricsOnly?: boolean };
+  const body = (await request.json().catch(() => ({}))) as {
+    metricsOnly?: boolean;
+    metricsForce?: boolean;
+  };
   const supabase = createAdminClient();
-  const summary = await runSocialTick(supabase, { metricsOnly: Boolean(body.metricsOnly) });
+  const summary = await runSocialTick(supabase, {
+    metricsOnly: Boolean(body.metricsOnly),
+    metricsForce: Boolean(body.metricsForce),
+  });
   return NextResponse.json({ ok: true, ...summary });
 }

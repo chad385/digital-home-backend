@@ -270,7 +270,7 @@ async function rollupPost(supabase: AdminClient, postId: string): Promise<void> 
 
 export async function runSocialTick(
   supabase: AdminClient,
-  opts: { metricsOnly?: boolean; postId?: string } = {}
+  opts: { metricsOnly?: boolean; postId?: string; metricsForce?: boolean } = {}
 ): Promise<SocialTickSummary> {
   const summary: SocialTickSummary = {
     postsDue: 0,
@@ -399,7 +399,9 @@ export async function runSocialTick(
 
   // 4. Refresh performance numbers on recently published targets.
   try {
-    summary.metricsRefreshed = await refreshDueMetrics(supabase);
+    const metrics = await refreshDueMetrics(supabase, { force: Boolean(opts.metricsForce) });
+    summary.metricsRefreshed = metrics.refreshed;
+    summary.errors.push(...metrics.errors);
   } catch (e) {
     summary.errors.push(`metrics: ${e instanceof Error ? e.message : String(e)}`);
   }
