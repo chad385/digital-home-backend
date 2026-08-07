@@ -2,6 +2,21 @@
 
 All notable changes to the Digital Home Backend Starter.
 
+## [2.5.4] — 2026-08-07
+
+Video publishing is now safe for large screen-recording exports:
+
+- The studio and CLI normalize every video to a bounded-bitrate 1080×1920
+  H.264 MP4 before upload, even when the source is already 9:16. Both paths
+  fail closed instead of silently queueing an oversized raw file.
+- YouTube resumable session URIs are persisted before bytes move. Uploads use
+  8 MiB `Content-Range` chunks and retries probe Google's accepted offset,
+  preventing a retry from creating another channel video.
+- Targets with a final platform `external_id` can never re-enter an upload
+  path, even if their local status is inconsistent.
+- Added focused tests for session creation, chunk boundaries, and mid-upload
+  resume. No database migration is required.
+
 ## [2.5.3] — 2026-08-06
 
 Performance metrics actually record now. Three faults were stacking up, and
