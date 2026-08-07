@@ -2,6 +2,16 @@
 
 All notable changes to the Digital Home Backend Starter.
 
+## [2.5.6] — 2026-08-07
+
+Social platforms for one post now begin concurrently, so an Instagram
+transcode or Facebook API wait cannot leave YouTube locally pending. Pending
+targets use an atomic short lease to prevent overlapping cron/manual ticks
+from creating duplicate platform uploads. YouTube also begins transferring
+chunks immediately after its resumable session is durably saved. The tick API
+and CLI accept an optional post ID for safely advancing one post in isolation.
+No database or environment changes are required.
+
 ## [2.5.5] — 2026-08-07
 
 Raised normalized social-video quality from a 6 Mbps ceiling to a true
