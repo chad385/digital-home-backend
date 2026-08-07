@@ -2,6 +2,14 @@
 
 All notable changes to the Digital Home Backend Starter.
 
+## [2.5.5] — 2026-08-07
+
+Raised normalized social-video quality from a 6 Mbps ceiling to a true
+8 Mbps target, while retaining a 60 MiB hard safety cap. The incident's
+57.8-second, 139 MB screen recording now normalizes to 55.7 MiB at roughly
+7.95 Mbps—more detail for UI text and motion without returning to oversized
+raw payloads. No database or environment changes are required.
+
 ## [2.5.4] — 2026-08-07
 
 Video publishing is now safe for large screen-recording exports:
