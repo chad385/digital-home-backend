@@ -33,6 +33,8 @@ import { refreshDueMetrics } from "./metrics";
 const MAX_ATTEMPTS = 3;
 /** Give Meta this long to transcode before we call the target dead. */
 const PROCESSING_DEADLINE_MS = 45 * 60 * 1000;
+/** A pending-target claim older than this came from a dead worker and may be recovered. */
+const TARGET_LEASE_MS = 10 * 60 * 1000;
 /** Inline poll budget after kicking off an IG container (publish-now UX). */
 const IG_INLINE_POLLS = 4;
 const IG_INLINE_POLL_DELAY_MS = 8000;
@@ -216,7 +218,7 @@ async function applyStep(
   attemptsDelta: number
 ): Promise<void> {
   if (step.state === "published") {
-    await supabase
+    const { error } = await supabase
       .from("social_post_targets")
       .update({
         status: "published",
@@ -227,8 +229,9 @@ async function applyStep(
         attempts: target.attempts + attemptsDelta,
       })
       .eq("id", target.id);
+    if (error) throw new Error(`Could not save published target: ${error.message}`);
   } else if (step.state === "processing") {
-    await supabase
+    const { error } = await supabase
       .from("social_post_targets")
       .update({
         status: "processing",
@@ -237,6 +240,7 @@ async function applyStep(
         attempts: target.attempts + attemptsDelta,
       })
       .eq("id", target.id);
+    if (error) throw new Error(`Could not save processing target: ${error.message}`);
   } else {
     const attempts = target.attempts + attemptsDelta;
     // Processing failures are terminal (the platform rejected the video);
@@ -244,7 +248,7 @@ async function applyStep(
     // YouTube transport failure is explicitly retryable because its durable
     // session can resume without creating another upload.
     const terminal = (!step.retryable && target.status !== "pending") || attempts >= MAX_ATTEMPTS;
-    await supabase
+    const { error } = await supabase
       .from("social_post_targets")
       .update({
         status: terminal ? "failed" : target.status === "processing" ? "processing" : "pending",
@@ -252,6 +256,7 @@ async function applyStep(
         attempts,
       })
       .eq("id", target.id);
+    if (error) throw new Error(`Could not save failed target: ${error.message}`);
   }
 }
 
@@ -333,7 +338,7 @@ export async function runSocialTick(
     let targetQuery = supabase
       .from("social_post_targets")
       .select("*, post:social_posts!inner(*), account:social_accounts(*)")
-      .in("status", ["pending", "processing"])
+      .in("status", ["pending", "publishing", "processing"])
       .eq("post.status", "publishing");
     if (opts.postId) targetQuery = targetQuery.eq("post_id", opts.postId);
     const { data: targets, error: targetsError } = await targetQuery;
@@ -359,13 +364,29 @@ export async function runSocialTick(
       }
     }
 
-    const touchedPosts = new Set<string>();
+    type LoadedTarget = SocialTarget & {
+      post: SocialPost;
+      account: SocialAccount | null;
+    };
+    const targetsByPost = new Map<string, LoadedTarget[]>();
     for (const row of targets || []) {
-      const target = row as unknown as SocialTarget & {
-        post: SocialPost;
-        account: SocialAccount | null;
-      };
-      touchedPosts.add(target.post_id);
+      const target = row as unknown as LoadedTarget;
+      targetsByPost.set(target.post_id, [...(targetsByPost.get(target.post_id) || []), target]);
+    }
+
+    const tallyStep = (step: PublishStep) => {
+      if (step.state === "published") summary.targetsPublished++;
+      else if (step.state === "processing") summary.targetsProcessing++;
+      else summary.targetsFailed++;
+    };
+
+    const workTarget = async (loadedTarget: LoadedTarget): Promise<void> => {
+      let target = loadedTarget;
+      // These change after a YouTube session is durably saved. If its immediate
+      // chunk upload fails, the catch path must preserve `processing` and the
+      // session ref instead of treating it like a new pending attempt.
+      let failureTarget: SocialTarget = target;
+      let failureAttemptsDelta = 1;
       try {
         // Repair impossible-but-dangerous state before doing anything else.
         // This also makes the anti-duplicate guard effective if an earlier DB
@@ -386,7 +407,35 @@ export async function runSocialTick(
             0
           );
           summary.targetsPublished++;
-          continue;
+          return;
+        }
+
+        // `publishing` is a short lease used only while a worker is creating a
+        // new platform upload. A live lease means another tick owns it; a stale
+        // one is recovered using the presence of durable platform state.
+        if (target.status === "publishing") {
+          const leaseAge = Date.now() - new Date(target.updated_at).getTime();
+          if (leaseAge <= TARGET_LEASE_MS) return;
+          const recoveredStatus =
+            Object.keys((target.platform_ref || {}) as Record<string, unknown>).length > 0
+              ? "processing"
+              : "pending";
+          const { data: recovered, error: recoverError } = await supabase
+            .from("social_post_targets")
+            .update({ status: recoveredStatus, error: null })
+            .eq("id", target.id)
+            .eq("status", "publishing")
+            .eq("updated_at", target.updated_at)
+            .select("id")
+            .maybeSingle();
+          if (recoverError) throw new Error(`Could not recover stale target lease: ${recoverError.message}`);
+          if (!recovered) return;
+          target = {
+            ...target,
+            status: recoveredStatus,
+            updated_at: new Date().toISOString(),
+          };
+          failureTarget = target;
         }
         // Carousels have no YouTube analogue — park the target as skipped
         // instead of failing the whole post.
@@ -395,7 +444,7 @@ export async function runSocialTick(
             .from("social_post_targets")
             .update({ status: "skipped", error: null })
             .eq("id", target.id);
-          continue;
+          return;
         }
         if (!target.account) {
           await applyStep(
@@ -405,7 +454,22 @@ export async function runSocialTick(
             1
           );
           summary.targetsFailed++;
-          continue;
+          return;
+        }
+
+        // Claim a not-yet-started target atomically. Concurrent manual/cron
+        // ticks may load the same pending rows, but only one may call a
+        // platform's create-upload endpoint.
+        if (target.status === "pending") {
+          const { data: claimed, error: claimError } = await supabase
+            .from("social_post_targets")
+            .update({ status: "publishing", error: null })
+            .eq("id", target.id)
+            .eq("status", "pending")
+            .select("id")
+            .maybeSingle();
+          if (claimError) throw new Error(`Could not claim pending target: ${claimError.message}`);
+          if (!claimed) return;
         }
 
         let step: PublishStep;
@@ -427,28 +491,49 @@ export async function runSocialTick(
               : await continuePublish(target, target.account);
         }
         await applyStep(supabase, target, step, attemptsDelta);
-        if (step.state === "published") summary.targetsPublished++;
-        else if (step.state === "processing") summary.targetsProcessing++;
-        else summary.targetsFailed++;
+
+        // YouTube session creation is deliberately metadata-only. Once its ref
+        // is durable, upload the chunks immediately in this same publish call;
+        // a later tick can still resume safely from Google's accepted offset.
+        if (
+          target.platform === "youtube" &&
+          target.status === "pending" &&
+          step.state === "processing"
+        ) {
+          const persistedTarget: SocialTarget = {
+            ...target,
+            status: "processing",
+            platform_ref: step.ref as never,
+            attempts: target.attempts + attemptsDelta,
+            updated_at: new Date().toISOString(),
+          };
+          failureTarget = persistedTarget;
+          // Session creation and its first chunk transfer are one attempt.
+          failureAttemptsDelta = 0;
+          step = await continuePublish(persistedTarget, target.account);
+          await applyStep(supabase, persistedTarget, step, 0);
+        }
+        tallyStep(step);
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         summary.errors.push(`target ${target.id}: ${message}`);
         try {
+          const retryableYouTube =
+            failureTarget.platform === "youtube" && failureTarget.status === "processing";
           const retryingYouTube =
-            target.platform === "youtube" &&
-            target.status === "processing" &&
-            target.attempts + 1 < MAX_ATTEMPTS;
+            retryableYouTube &&
+            failureTarget.attempts + failureAttemptsDelta < MAX_ATTEMPTS;
           await applyStep(
             supabase,
-            target,
+            failureTarget,
             {
               state: "failed",
               error: message,
               // Transport/session failures can resume from Google's accepted
               // offset. Never throw away a persisted YouTube session early.
-              retryable: target.platform === "youtube" && target.status === "processing",
+              retryable: retryableYouTube,
             },
-            1
+            failureAttemptsDelta
           );
           if (retryingYouTube) summary.targetsProcessing++;
           else summary.targetsFailed++;
@@ -456,10 +541,13 @@ export async function runSocialTick(
           // row update failed too — leave for next tick
         }
       }
-    }
+    };
 
-    // 3. Roll up finished posts.
-    for (const postId of touchedPosts) {
+    // Different scheduled posts stay bounded, but every platform belonging to
+    // one post fans out together. A slow Meta API can no longer keep the other
+    // targets locally pending.
+    for (const [postId, postTargets] of targetsByPost) {
+      await Promise.all(postTargets.map(workTarget));
       await rollupPost(supabase, postId);
     }
   }

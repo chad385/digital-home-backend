@@ -9,7 +9,7 @@
  *   node scripts/social-post.mjs list [--status scheduled] [--limit 20]
  *   node scripts/social-post.mjs create --caption "..." [options]
  *   node scripts/social-post.mjs publish <post-id>
- *   node scripts/social-post.mjs tick
+ *   node scripts/social-post.mjs tick [--post-id <post-id>]
  *
  * create options:
  *   --caption "text"           caption (or --caption-file path)
@@ -357,7 +357,9 @@ if (cmd === 'accounts') {
   const result = await api('POST', `/api/social/posts/${id}/publish`, {});
   console.log(JSON.stringify(result, null, 2));
 } else if (cmd === 'tick') {
-  const result = await api('POST', '/api/social/tick', {});
+  const result = await api('POST', '/api/social/tick', {
+    postId: args['post-id'] || undefined,
+  });
   console.log(JSON.stringify(result, null, 2));
 } else {
   console.error('Commands: accounts | list | create | publish <id> | tick');
