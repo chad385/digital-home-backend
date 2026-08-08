@@ -49,12 +49,12 @@
   },
   // Non-secret env vars. Secrets (API keys) are set via `wrangler secret put`.
   "vars": {
-    "SUPABASE_URL": "https://your-project.supabase.co",
-    "SUPABASE_ANON_KEY": "your-anon-key",
-    "NEXT_PUBLIC_SUPABASE_URL": "https://your-project.supabase.co",
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "your-anon-key",
-    "DIGITAL_HOME_URL": "https://yourdomain.com",
-    "NEXT_PUBLIC_DIGITAL_HOME_URL": "https://yourdomain.com",
+    "SUPABASE_URL": "https://tarbgdnnkwdwldeivwqi.supabase.co",
+    "SUPABASE_ANON_KEY": "sb_publishable_6zDb6zTQdAL_Aif5O25Fxg_Tc-tGpyH",
+    "NEXT_PUBLIC_SUPABASE_URL": "https://tarbgdnnkwdwldeivwqi.supabase.co",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_6zDb6zTQdAL_Aif5O25Fxg_Tc-tGpyH",
+    "DIGITAL_HOME_URL": "https://digital-home-frontend.chad-1a0.workers.dev",
+    "NEXT_PUBLIC_DIGITAL_HOME_URL": "https://digital-home-frontend.chad-1a0.workers.dev",
     "R2_PUBLIC_BASE": "https://media.yourdomain.com"
   }
 }
