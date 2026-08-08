@@ -1,18 +1,13 @@
 import type { Metadata } from 'next';
-import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import { Sidebar } from '@/components/sidebar';
 import { cn } from "@/lib/utils";
+import { getTokens, buildThemeCss, googleFontsHref } from '@/lib/theme/tokens';
 
-const geist = Geist({subsets:['latin'],variable:'--font-sans'});
-
-const geistMono = Geist_Mono({
-  variable: '--font-mono',
-  subsets: ['latin'],
-});
+const tokens = getTokens();
 
 export const metadata: Metadata = {
-  title: 'Digital Home Platform',
+  title: `${tokens.brand.name} Platform`,
   description: 'The operating system for your digital presence.',
   robots: 'noindex, nofollow',
 };
@@ -27,11 +22,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={cn("dark", "font-sans", geist.variable)}>
+    <html lang="en" suppressHydrationWarning className={cn("dark", "font-sans")}>
       <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+        <link rel="stylesheet" href={googleFontsHref(tokens)} />
+        <style
+          id="theme-tokens"
+          dangerouslySetInnerHTML={{ __html: buildThemeCss(tokens) }}
+        />
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
-      <body className={`${geist.variable} ${geistMono.variable} bg-minimal-bg text-white font-sans h-screen w-screen overflow-hidden flex antialiased`}>
+      <body className="bg-minimal-bg text-white font-sans h-screen w-screen overflow-hidden flex antialiased">
         <Sidebar />
         <main className="flex-1 flex flex-col h-full overflow-hidden">
           {children}

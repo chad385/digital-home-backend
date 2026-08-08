@@ -5,13 +5,19 @@
 @custom-variant dark (&:is(.dark *));
 @source "../../src";
 
-@theme {
-  /* Ultra-minimal palette */
-  --color-minimal-bg: #000000;
-  --color-minimal-border: #262626;
-  --color-minimal-muted: #737373;
-  --color-minimal-accent: #ffffff;
-  --color-minimal-row: #090909;
+/* Ultra-minimal palette values come from design-system/tokens.json, injected
+   as --minimal-*-value / --white-value / --black-value custom properties by
+   src/app/layout.tsx (see src/lib/theme/tokens.ts). Edit tokens.json to
+   theme this dashboard, not this file. Status dot colors are semantic
+   (pipeline state), not brand identity, so they stay as literal values here. */
+@theme inline {
+  --color-minimal-bg: var(--minimal-bg-value);
+  --color-minimal-border: var(--minimal-border-value);
+  --color-minimal-muted: var(--minimal-muted-value);
+  --color-minimal-accent: var(--minimal-accent-value);
+  --color-minimal-row: var(--minimal-row-value);
+  --color-white: var(--white-value);
+  --color-black: var(--black-value);
 
   /* Status dot colors */
   --color-status-planned: #525252;
@@ -29,9 +35,9 @@
 }
 
 body {
-  background: var(--color-minimal-bg);
-  color: var(--color-minimal-accent);
-  font-family: var(--font-sans, 'Geist Sans', system-ui, -apple-system, sans-serif);
+  background: var(--minimal-bg-value);
+  color: var(--minimal-accent-value);
+  font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -291,16 +297,8 @@ a {
    is mirrored (300↔700 etc.) and white/black swap, so existing markup needs
    no per-page changes. Toggled by removing the `dark` class from <html>. */
 html:not(.dark) {
-  /* minimal palette */
-  --color-minimal-bg: #ffffff;
-  --color-minimal-border: #e4e4e7;
-  --color-minimal-muted: #6e6e78;
-  --color-minimal-accent: #0a0a0a;
-  --color-minimal-row: #f7f7f8;
-
-  /* core inversions */
-  --color-white: #0a0a0a;
-  --color-black: #ffffff;
+  /* minimal palette + white/black inversions now come from tokens.json —
+     see the :root / html:not(.dark) blocks injected by layout.tsx. */
 
   /* mirrored zinc scale, tuned so secondary/meta text stays readable on white */
   --color-zinc-100: #18181b;
@@ -332,11 +330,11 @@ html:not(.dark) {
   --color-status-archived: #d4d4d8;
 }
 
-/* Dark mode legibility tuning — brightens the most-used secondary/meta tones
-   a notch above stock zinc so small text reads clearly on pure black. */
+/* Dark mode legibility tuning — brightens the most-used secondary zinc tone
+   a notch above stock zinc so small text reads clearly on pure black.
+   (minimal-muted / minimal-row are tokens.json's dashboard.dark values now —
+   see tokens.json for the actual numbers rendered in dark mode.) */
 .dark {
-  --color-minimal-muted: #8b8b94;
-  --color-minimal-row: #0e0e10;
   --color-zinc-500: #82828c;
   --color-zinc-600: #70707a;
 }

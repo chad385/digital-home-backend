@@ -2,6 +2,9 @@
 
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/browser';
+import { getTokens } from '@/lib/theme/tokens';
+
+const BRAND = getTokens().brand;
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -36,7 +39,7 @@ export default function LoginPage() {
           <svg xmlns="http://www.w3.org/2000/svg" className="w-8 h-8 text-white mb-6" viewBox="0 0 256 256" fill="currentColor">
             <path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,160H40V56H216V200Z" />
           </svg>
-          <h1 className="text-base font-semibold text-white">Digital Home</h1>
+          <h1 className="text-base font-semibold text-white">{BRAND.name}</h1>
         </div>
 
         {/* Email */}
