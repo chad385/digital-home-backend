@@ -153,3 +153,17 @@ Compound — same content for every instance, ships in the base.
 ## No other changes
 
 No CRM logic, API routes, or other components have been modified.
+
+## Base upgrades (generic, config-driven — safe for every instance)
+- **Image Visual DNA** (`src/app/api/write-article/route.ts`) — the hero-image
+  prompt builder wraps every per-post subject with a brand Visual DNA read from
+  `brand_context` (category `content`): `image_style` prepended, `image_avoid`
+  appended. Template default is a neutral placeholder; instances set their own
+  in config — no code change. Keeps generated images on-brand across subjects.
+- **Delete a calendar entry** (`src/app/api/content-calendar/[id]/route.ts`) —
+  added `DELETE` to remove a suggested/planned topic (leaves any written
+  content_object intact).
+- **Content board UX** (`src/app/content/page.tsx`) — a "Run trend scan" toolbar
+  button (session-auth POST to `/api/trend-scan`) and a per-card Remove action
+  for planned/approved/archived. No brand values; instances tune scan topics via
+  `backend_settings.trend_scan_config`.
